@@ -3,16 +3,18 @@ import time
 import json
 import logging
 import psutil
-import requests
 import smtplib
+import pandas as pd
 from email.mime.text import MIMEText
 from prometheus_client import start_http_server, Gauge
 from threading import Thread
 from typing import List, Dict, Any
+import subprocess
+import platform
 
 # Configuration and log file paths
 CONFIG_FILE_PATH = os.getenv('CONFIG_FILE_PATH', 'config.json')
-LOG_FILE_PATH = os.getenv('LOG_FILE_PATH', 'server_monitor.log')
+LOG_FILE_PATH = os.getenv('LOG_FILE_PATH', 'server_monitor.csv')  # Logging to CSV format
 
 def load_config() -> Dict[str, Any]:
     """Load configuration from the JSON file."""
@@ -33,7 +35,7 @@ def load_config() -> Dict[str, Any]:
         raise
 
 def setup_logging(level: str) -> None:
-    """Setup logging configuration."""
+    """Setup logging configuration to CSV format."""
     log_level = getattr(logging, level.upper(), logging.INFO)
     
     # Create a custom logger
@@ -45,7 +47,7 @@ def setup_logging(level: str) -> None:
     file_handler = logging.FileHandler(LOG_FILE_PATH)
     
     # Create formatters and add them to handlers
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter('%(asctime)s,%(levelname)s,%(message)s')
     console_handler.setFormatter(formatter)
     file_handler.setFormatter(formatter)
     
@@ -54,48 +56,21 @@ def setup_logging(level: str) -> None:
     logger.addHandler(file_handler)
 
 def perform_health_checks() -> Dict[str, Any]:
-    """Perform health checks on CPU, memory, disk, and server response."""
+    """Perform health checks on CPU, memory, and disk usage."""
     results = {
+        'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
         'cpu_usage': psutil.cpu_percent(),
         'memory_usage': psutil.virtual_memory().percent,
         'disk_usage': psutil.disk_usage('/').percent,
-        'response_time': check_server_response(),
         'needs_restart': False  # Initialize needs_restart key
     }
     
-    # Example condition for setting needs_restart
     config = load_config()
     if results['cpu_usage'] > config['cpu_threshold']:
         results['needs_restart'] = True
     
     logging.debug(f"Health check results: {results}")
     return results
-
-def check_server_response() -> float:
-    """Check server response time."""
-    try:
-        response = requests.get('http://localhost:7777/health', timeout=20)
-        response_time = response.elapsed.total_seconds()
-        if response.status_code == 200:
-            logging.debug(f"Server response time: {response_time} seconds")
-            return response_time
-        else:
-            logging.error(f"Health check failed with status code: {response.status_code}")
-            return float('inf')
-    except requests.RequestException as e:
-        logging.error(f"Health check failed: {e}")
-        return float('inf')
-
-def verify_server_is_running() -> None:
-    """Verify that the server is running and accessible."""
-    try:
-        response = requests.get('http://localhost:7777/health', timeout=20)
-        if response.status_code == 200:
-            logging.info("Server is running and accessible.")
-        else:
-            logging.error(f"Server is running but returned status code {response.status_code}.")
-    except requests.RequestException as e:
-        logging.error(f"Failed to connect to the server: {e}")
 
 def detect_anomalies(current_value: float, historical_data: List[float], threshold: float) -> bool:
     """Detect anomalies based on historical data."""
@@ -114,7 +89,7 @@ def send_alert(message: str) -> None:
     receiver_email = "laukikbelsare113@gmail.com"
     
     msg = MIMEText(message)
-    msg['Subject'] = 'Server Alert'
+    msg['Subject'] = 'Server failed.'
     msg['From'] = sender_email
     msg['To'] = receiver_email
 
@@ -128,9 +103,9 @@ def send_alert(message: str) -> None:
 def restart_service(service_name: str) -> None:
     """Restart the server service."""
     try:
-        os.system(f'systemctl restart {service_name}')
+        subprocess.run(['systemctl', 'restart', service_name], check=True)
         logging.info(f'Service {service_name} restarted successfully.')
-    except Exception as e:
+    except subprocess.CalledProcessError as e:
         logging.error(f"Failed to restart service {service_name}: {e}")
 
 def start_prometheus_server(port: int) -> None:
@@ -159,14 +134,12 @@ def check_and_adapt_thresholds(results: Dict[str, Any], historical_data: Dict[st
     cpu_anomaly = detect_anomalies(results['cpu_usage'], historical_data['cpu_usage'], thresholds['cpu_threshold'])
     memory_anomaly = detect_anomalies(results['memory_usage'], historical_data['memory_usage'], thresholds['memory_threshold'])
     disk_anomaly = detect_anomalies(results['disk_usage'], historical_data['disk_usage'], thresholds['disk_threshold'])
-    response_anomaly = detect_anomalies(results['response_time'], historical_data['response_time'], thresholds['response_time_threshold'])
     
-    if cpu_anomaly or memory_anomaly or disk_anomaly or response_anomaly:
+    if cpu_anomaly or memory_anomaly or disk_anomaly:
         new_thresholds = {
             'cpu_threshold': thresholds['cpu_threshold'] + 5,
             'memory_threshold': thresholds['memory_threshold'] + 5,
-            'disk_threshold': thresholds['disk_threshold'] + 5,
-            'response_time_threshold': thresholds['response_time_threshold'] + 1
+            'disk_threshold': thresholds['disk_threshold'] + 5
         }
         adjust_thresholds(new_thresholds)
         logging.info('Thresholds adjusted due to detected anomalies.')
@@ -187,57 +160,40 @@ def adjust_thresholds(new_thresholds: Dict[str, int]) -> None:
     except Exception as e:
         logging.error(f"Unexpected error while adjusting thresholds: {e}")
 
-def monitor_distributed_servers(server_urls: List[str]) -> None:
-    """Monitor multiple distributed servers."""
-    for url in server_urls:
-        try:
-            response = requests.get(url)
-            if response.status_code != 200:
-                logging.error(f"Server {url} is down.")
-            else:
-                logging.debug(f"Server {url} is up.")
-        except requests.RequestException as e:
-            logging.error(f"Error monitoring server {url}: {e}")
+def clear_terminal() -> None:
+    """Clear the terminal screen."""
+    os.system('cls' if platform.system() == 'Windows' else 'clear')
 
-def main() -> None:
-    """Main function to start the server and perform health checks."""
-    config = load_config()
-    setup_logging(config['log_level'])
-    start_prometheus_server(config['prometheus_port'])
+# Example function call to start the server and monitoring
+if __name__ == '__main__':
+    setup_logging('DEBUG')  # Set the logging level as required
+    start_prometheus_server(8000)  # Start Prometheus server on port 8000
     
+    # Example configuration
     historical_data = {
         'cpu_usage': [],
         'memory_usage': [],
-        'disk_usage': [],
-        'response_time': []
+        'disk_usage': []
     }
-    
-    while True:
-        try:
-            verify_server_is_running()  # Check if the server is up and running
-            results = perform_health_checks()
-            
-            # Add new results to historical data
-            for key in historical_data:
-                historical_data[key].append(results[key])
-                # Limit the size of historical data to avoid memory leaks
-                if len(historical_data[key]) > 100:
-                    historical_data[key].pop(0)
-            
-            check_and_adapt_thresholds(results, historical_data)
-            
-            if results['needs_restart']:
-                restart_service(config['service_name'])
-                send_alert(f"{config['service_name']} has been restarted due to health check failure.")
-            
-            monitor_distributed_servers(config['server_urls'])
-            
-            time.sleep(config['check_interval'])
-        except KeyboardInterrupt:
-            logging.info("Server monitoring stopped by user.")
-            break
-        except Exception as e:
-            logging.error(f"Unexpected error in main loop: {e}")
 
-if __name__ == "__main__":
-    main()
+    while True:
+        clear_terminal()
+        health_results = perform_health_checks()
+        check_and_adapt_thresholds(health_results, historical_data)
+        
+        if health_results['needs_restart']:
+            restart_service('your_service_name')
+        
+        # Append to historical data for anomaly detection
+        for key in historical_data.keys():
+            historical_data[key].append(health_results.get(f'{key}', 0))
+
+        # Print health check results
+        print(f"Timestamp: {health_results['timestamp']}")
+        print(f"CPU Usage: {health_results['cpu_usage']}%")
+        print(f"Memory Usage: {health_results['memory_usage']}%")
+        print(f"Disk Usage: {health_results['disk_usage']}%")
+        print(f"Needs Restart: {health_results['needs_restart']}")
+        
+        time.sleep(10)  # Wait for 60 seconds before the next health check
+
