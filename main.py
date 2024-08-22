@@ -181,8 +181,8 @@ if __name__ == '__main__':
         health_results = perform_health_checks()
         check_and_adapt_thresholds(health_results, historical_data)
         
-        if health_results['needs_restart']:
-            restart_service('your_service_name')
+        if results['needs_restart']:
+                restart_service(config.get('service_name', 'my_service'))
         
         # Append to historical data for anomaly detection
         for key in historical_data.keys():
