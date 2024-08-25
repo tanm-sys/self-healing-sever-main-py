@@ -7,11 +7,19 @@ import smtplib
 from email.mime.text import MIMEText
 from prometheus_client import start_http_server, Gauge
 from threading import Thread
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
 import subprocess
 import platform
 
-# Functions to dynamically get configuration and log file paths
+# Define the expected configuration keys and their types
+REQUIRED_CONFIG_KEYS = {
+    'cpu_threshold': (int, float),
+    'memory_threshold': (int, float),
+    'disk_threshold': (int, float),
+    'log_level': str,
+    'alert_email': str
+}
+
 def get_config_file_path() -> str:
     return os.getenv('CONFIG_FILE_PATH', 'config.json')
 
@@ -19,10 +27,12 @@ def get_log_file_path() -> str:
     return os.getenv('LOG_FILE_PATH', 'server_monitor.csv')
 
 def load_config() -> Dict[str, Any]:
-    """Load configuration from the JSON file."""
+    """Load and validate configuration from the JSON file."""
     try:
         with open(get_config_file_path()) as config_file:
-            return json.load(config_file)
+            config = json.load(config_file)
+            validate_config(config)
+            return config
     except FileNotFoundError:
         logging.error(f"Configuration file not found: {get_config_file_path()}")
         raise
@@ -35,6 +45,16 @@ def load_config() -> Dict[str, Any]:
     except Exception as e:
         logging.error(f"Unexpected error while loading configuration: {e}")
         raise
+
+def validate_config(config: Dict[str, Any]) -> None:
+    """Validate the configuration dictionary."""
+    for key, expected_type in REQUIRED_CONFIG_KEYS.items():
+        if key not in config:
+            logging.error(f"Missing required configuration key: {key}")
+            raise ValueError(f"Missing required configuration key: {key}")
+        if not isinstance(config[key], expected_type):
+            logging.error(f"Invalid type for key {key}: Expected {expected_type}, got {type(config[key])}")
+            raise ValueError(f"Invalid type for key {key}: Expected {expected_type}, got {type(config[key])}")
 
 def setup_logging(level: str) -> None:
     """Setup logging configuration to CSV format."""
@@ -83,8 +103,9 @@ def detect_anomalies(current_value: float, historical_data: List[float], thresho
 
 def send_alert(message: str) -> None:
     """Send an alert email."""
+    config = load_config()
     sender_email = "sender@example.com"
-    receiver_email = "receiver@example.com"
+    receiver_email = config['alert_email']
     
     msg = MIMEText(message)
     msg['Subject'] = 'Server Alert'
@@ -150,7 +171,7 @@ def check_and_adapt_thresholds(results: Dict[str, Any], historical_data: Dict[st
         adjust_thresholds(new_thresholds)
         logging.info('Thresholds adjusted due to detected anomalies using exponential backoff.')
 
-def adjust_thresholds(new_thresholds: Dict[str, int]) -> None:
+def adjust_thresholds(new_thresholds: Dict[str, Union[int, float]]) -> None:
     """Adjust health check thresholds in the configuration."""
     try:
         with open(get_config_file_path(), 'r+') as config_file:
@@ -172,7 +193,8 @@ def clear_terminal() -> None:
 
 # Example function call to start the server and monitoring
 if __name__ == '__main__':
-    setup_logging('DEBUG')  # Set the logging level as required
+    config = load_config()
+    setup_logging(config['log_level'])  # Set the logging level as required
     start_prometheus_server(8000)  # Start Prometheus server on port 8000
     
     historical_data = {
@@ -200,4 +222,4 @@ if __name__ == '__main__':
         print(f"Disk Usage: {health_results['disk_usage']}%")
         print(f"Needs Restart: {health_results['needs_restart']}")
         
-        time.sleep(10)  # Wait for 10 seconds before the next health check
+        time.sleep(10) 
