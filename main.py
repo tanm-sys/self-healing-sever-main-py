@@ -4,7 +4,6 @@ import json
 import logging
 import psutil
 import smtplib
-import pandas as pd
 from email.mime.text import MIMEText
 from prometheus_client import start_http_server, Gauge
 from threading import Thread
@@ -12,20 +11,23 @@ from typing import List, Dict, Any
 import subprocess
 import platform
 
-# Configuration and log file paths
-CONFIG_FILE_PATH = os.getenv('CONFIG_FILE_PATH', 'config.json')
-LOG_FILE_PATH = os.getenv('LOG_FILE_PATH', 'server_monitor.csv')  # Logging to CSV format
+# Functions to dynamically get configuration and log file paths
+def get_config_file_path() -> str:
+    return os.getenv('CONFIG_FILE_PATH', 'config.json')
+
+def get_log_file_path() -> str:
+    return os.getenv('LOG_FILE_PATH', 'server_monitor.csv')
 
 def load_config() -> Dict[str, Any]:
     """Load configuration from the JSON file."""
     try:
-        with open(CONFIG_FILE_PATH) as config_file:
+        with open(get_config_file_path()) as config_file:
             return json.load(config_file)
     except FileNotFoundError:
-        logging.error(f"Configuration file not found: {CONFIG_FILE_PATH}")
+        logging.error(f"Configuration file not found: {get_config_file_path()}")
         raise
     except PermissionError:
-        logging.error(f"Permission denied: {CONFIG_FILE_PATH}")
+        logging.error(f"Permission denied: {get_config_file_path()}")
         raise
     except json.JSONDecodeError:
         logging.error("Error decoding JSON from the configuration file.")
@@ -38,20 +40,16 @@ def setup_logging(level: str) -> None:
     """Setup logging configuration to CSV format."""
     log_level = getattr(logging, level.upper(), logging.INFO)
     
-    # Create a custom logger
     logger = logging.getLogger()
     logger.setLevel(log_level)
     
-    # Create handlers
     console_handler = logging.StreamHandler()
-    file_handler = logging.FileHandler(LOG_FILE_PATH)
+    file_handler = logging.FileHandler(get_log_file_path())
     
-    # Create formatters and add them to handlers
     formatter = logging.Formatter('%(asctime)s,%(levelname)s,%(message)s')
     console_handler.setFormatter(formatter)
     file_handler.setFormatter(formatter)
     
-    # Add handlers to the logger
     logger.addHandler(console_handler)
     logger.addHandler(file_handler)
 
@@ -62,7 +60,7 @@ def perform_health_checks() -> Dict[str, Any]:
         'cpu_usage': psutil.cpu_percent(),
         'memory_usage': psutil.virtual_memory().percent,
         'disk_usage': psutil.disk_usage('/').percent,
-        'needs_restart': False  # Initialize needs_restart key
+        'needs_restart': False
     }
     
     config = load_config()
@@ -74,7 +72,7 @@ def perform_health_checks() -> Dict[str, Any]:
 
 def detect_anomalies(current_value: float, historical_data: List[float], threshold: float) -> bool:
     """Detect anomalies based on historical data."""
-    if len(historical_data) < 5:  # Ensure there is enough data
+    if len(historical_data) < 5:
         return False
     
     avg = sum(historical_data) / len(historical_data)
@@ -85,11 +83,11 @@ def detect_anomalies(current_value: float, historical_data: List[float], thresho
 
 def send_alert(message: str) -> None:
     """Send an alert email."""
-    sender_email = "rohanbelsare113@gmail.com"
-    receiver_email = "laukikbelsare113@gmail.com"
+    sender_email = "sender@example.com"
+    receiver_email = "receiver@example.com"
     
     msg = MIMEText(message)
-    msg['Subject'] = 'Server failed.'
+    msg['Subject'] = 'Server Alert'
     msg['From'] = sender_email
     msg['To'] = receiver_email
 
@@ -101,12 +99,19 @@ def send_alert(message: str) -> None:
         logging.error(f"Failed to send alert: {e}")
 
 def restart_service(service_name: str) -> None:
-    """Restart the server service."""
+    """Restart the server service with enhanced error handling."""
     try:
         subprocess.run(['systemctl', 'restart', service_name], check=True)
         logging.info(f'Service {service_name} restarted successfully.')
     except subprocess.CalledProcessError as e:
         logging.error(f"Failed to restart service {service_name}: {e}")
+        send_alert(f"Failed to restart service {service_name}: {e}")
+    except FileNotFoundError:
+        logging.error("Systemctl not found on the system.")
+        send_alert("Systemctl not found on the system.")
+    except Exception as e:
+        logging.error(f"Unexpected error during service restart: {e}")
+        send_alert(f"Unexpected error during service restart: {e}")
 
 def start_prometheus_server(port: int) -> None:
     """Start the Prometheus metrics server."""
@@ -128,7 +133,7 @@ def start_prometheus_server(port: int) -> None:
     thread.start()
 
 def check_and_adapt_thresholds(results: Dict[str, Any], historical_data: Dict[str, List[float]]) -> None:
-    """Check health results and adapt thresholds if necessary."""
+    """Check health results and adapt thresholds using exponential backoff."""
     thresholds = load_config()
     
     cpu_anomaly = detect_anomalies(results['cpu_usage'], historical_data['cpu_usage'], thresholds['cpu_threshold'])
@@ -136,25 +141,26 @@ def check_and_adapt_thresholds(results: Dict[str, Any], historical_data: Dict[st
     disk_anomaly = detect_anomalies(results['disk_usage'], historical_data['disk_usage'], thresholds['disk_threshold'])
     
     if cpu_anomaly or memory_anomaly or disk_anomaly:
+        # Use exponential backoff for threshold adjustment
         new_thresholds = {
-            'cpu_threshold': thresholds['cpu_threshold'] + 5,
-            'memory_threshold': thresholds['memory_threshold'] + 5,
-            'disk_threshold': thresholds['disk_threshold'] + 5
+            'cpu_threshold': thresholds['cpu_threshold'] * 1.5,
+            'memory_threshold': thresholds['memory_threshold'] * 1.5,
+            'disk_threshold': thresholds['disk_threshold'] * 1.5
         }
         adjust_thresholds(new_thresholds)
-        logging.info('Thresholds adjusted due to detected anomalies.')
+        logging.info('Thresholds adjusted due to detected anomalies using exponential backoff.')
 
 def adjust_thresholds(new_thresholds: Dict[str, int]) -> None:
     """Adjust health check thresholds in the configuration."""
     try:
-        with open(CONFIG_FILE_PATH, 'r+') as config_file:
+        with open(get_config_file_path(), 'r+') as config_file:
             config = json.load(config_file)
             config.update(new_thresholds)
             config_file.seek(0)
             json.dump(config, config_file, indent=4)
-            config_file.truncate()  # Remove any leftover content
+            config_file.truncate()
     except PermissionError:
-        logging.error(f"Permission denied: {CONFIG_FILE_PATH}")
+        logging.error(f"Permission denied: {get_config_file_path()}")
     except json.JSONDecodeError:
         logging.error("Error decoding JSON from the configuration file.")
     except Exception as e:
@@ -169,7 +175,6 @@ if __name__ == '__main__':
     setup_logging('DEBUG')  # Set the logging level as required
     start_prometheus_server(8000)  # Start Prometheus server on port 8000
     
-    # Example configuration
     historical_data = {
         'cpu_usage': [],
         'memory_usage': [],
@@ -195,5 +200,4 @@ if __name__ == '__main__':
         print(f"Disk Usage: {health_results['disk_usage']}%")
         print(f"Needs Restart: {health_results['needs_restart']}")
         
-        time.sleep(10)  # Wait for 60 seconds before the next health check
-
+        time.sleep(10)  # Wait for 10 seconds before the next health check
