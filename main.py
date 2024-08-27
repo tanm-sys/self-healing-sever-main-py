@@ -83,7 +83,7 @@ def send_email(message: str) -> None:
         service = build('gmail', 'v1', credentials=creds)
         email_msg = MIMEText(message)
         email_msg['to'] = config['alert_email']
-        email_msg['from'] = 'me'
+        email_msg['from'] = 'rohanbelsare113@gmail.com'
         email_msg['subject'] = 'Server Alert'
 
         raw_msg = base64.urlsafe_b64encode(email_msg.as_bytes()).decode()
@@ -219,4 +219,5 @@ if __name__ == '__main__':
         print(f"Needs Restart: {health_results['needs_restart']}")
 
         time.sleep(5)
+
 
