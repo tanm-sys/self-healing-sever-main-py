@@ -7,12 +7,17 @@
     "disk_threshold": 90,
     "response_time_threshold": 2.0,
     "check_interval": 60,
-    "alert_email": "rohanbelsare113@gmail.com",
     "ml_model_path": "models/anomaly_detector.pkl",
     "historical_data_db": "data/health_data.db",
     "dashboard_port": 5000,
-    "log_level": "INFO",
-    "prometheus_port": 8000
-    
-  }
-  
+    "log_level": "error",
+    "prometheus_port": 8000,
+    "smtp": {
+        "sender_email": "rohanbelsare113@gmail.com",
+        "receiver_email": "laukikbelsare113@gmail.com",
+        "smtp_server": "smtp.gmail.com",
+        "smtp_port": 587,
+        "smtp_username": "rohanbelsare113@gmail.com",
+        "smtp_password": "pbiz abor mobv rnvr"  
+    }
+}
