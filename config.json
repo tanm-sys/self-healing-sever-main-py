@@ -3,5 +3,11 @@
     "memory_threshold": 85,
     "disk_threshold": 85,
     "log_level": "INFO",
-    "alert_email": "admin@example.com"
+    "alert_email": "admin@example.com",
+    "client_id": "378804903587-77nb0r18qun4rnuju0m9d7p42jn7mpu1.apps.googleusercontent.com",
+    "project_id": "self-healing-server",
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+    "client_secret": "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"
 }
