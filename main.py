@@ -10,11 +10,6 @@ from threading import Thread
 from typing import List, Dict, Any, Union
 import subprocess
 import platform
-import statistics
-
-# Global constants for file paths
-CONFIG_FILE_PATH = os.getenv('CONFIG_FILE_PATH', 'config.json')
-LOG_FILE_PATH = os.getenv('LOG_FILE_PATH', 'server_monitor.log')
 
 # Define the expected configuration keys and their types
 REQUIRED_CONFIG_KEYS = {
@@ -25,22 +20,24 @@ REQUIRED_CONFIG_KEYS = {
     'alert_email': str
 }
 
+def get_config_file_path() -> str:
+    return os.getenv('CONFIG_FILE_PATH', 'config.json')
+
+def get_log_file_path() -> str:
+    return os.getenv('LOG_FILE_PATH', 'server_monitor.csv')
+
 def load_config() -> Dict[str, Any]:
     """Load and validate configuration from the JSON file."""
-    if os.stat(CONFIG_FILE_PATH).st_size == 0:
-        logging.error(f"Configuration file is empty: {CONFIG_FILE_PATH}")
-        raise ValueError("Configuration file is empty.")
-    
     try:
-        with open(CONFIG_FILE_PATH) as config_file:
+        with open(get_config_file_path()) as config_file:
             config = json.load(config_file)
             validate_config(config)
             return config
     except FileNotFoundError:
-        logging.error(f"Configuration file not found: {CONFIG_FILE_PATH}")
+        logging.error(f"Configuration file not found: {get_config_file_path()}")
         raise
     except PermissionError:
-        logging.error(f"Permission denied: {CONFIG_FILE_PATH}")
+        logging.error(f"Permission denied: {get_config_file_path()}")
         raise
     except json.JSONDecodeError:
         logging.error("Error decoding JSON from the configuration file.")
@@ -67,7 +64,7 @@ def setup_logging(level: str) -> None:
     logger.setLevel(log_level)
     
     console_handler = logging.StreamHandler()
-    file_handler = logging.FileHandler(LOG_FILE_PATH)
+    file_handler = logging.FileHandler(get_log_file_path())
     
     formatter = logging.Formatter('%(asctime)s,%(levelname)s,%(message)s')
     console_handler.setFormatter(formatter)
@@ -94,17 +91,14 @@ def perform_health_checks() -> Dict[str, Any]:
     return results
 
 def detect_anomalies(current_value: float, historical_data: List[float], threshold: float) -> bool:
-    """Detect anomalies using a statistical approach."""
+    """Detect anomalies based on historical data."""
     if len(historical_data) < 5:
-        logging.warning("Insufficient data for reliable anomaly detection.")
         return False
     
-    mean = statistics.mean(historical_data)
-    stdev = statistics.stdev(historical_data) if len(historical_data) > 1 else 0
-    is_anomaly = abs(current_value - mean) > (threshold * stdev)
-    
-    logging.debug(f"Anomaly detection - Current Value: {current_value}, Mean: {mean}, "
-                  f"Standard Deviation: {stdev}, Is Anomaly: {is_anomaly}")
+    avg = sum(historical_data) / len(historical_data)
+    deviation = abs(current_value - avg)
+    is_anomaly = deviation > threshold
+    logging.debug(f"Anomaly detection - Current Value: {current_value}, Avg: {avg}, Deviation: {deviation}, Is Anomaly: {is_anomaly}")
     return is_anomaly
 
 def send_alert(message: str) -> None:
@@ -179,19 +173,15 @@ def check_and_adapt_thresholds(results: Dict[str, Any], historical_data: Dict[st
 
 def adjust_thresholds(new_thresholds: Dict[str, Union[int, float]]) -> None:
     """Adjust health check thresholds in the configuration."""
-    if os.stat(CONFIG_FILE_PATH).st_size == 0:
-        logging.error(f"Configuration file is empty: {CONFIG_FILE_PATH}")
-        raise ValueError("Configuration file is empty.")
-    
     try:
-        with open(CONFIG_FILE_PATH, 'r+') as config_file:
+        with open(get_config_file_path(), 'r+') as config_file:
             config = json.load(config_file)
             config.update(new_thresholds)
             config_file.seek(0)
             json.dump(config, config_file, indent=4)
             config_file.truncate()
     except PermissionError:
-        logging.error(f"Permission denied: {CONFIG_FILE_PATH}")
+        logging.error(f"Permission denied: {get_config_file_path()}")
     except json.JSONDecodeError:
         logging.error("Error decoding JSON from the configuration file.")
     except Exception as e:
@@ -200,3 +190,36 @@ def adjust_thresholds(new_thresholds: Dict[str, Union[int, float]]) -> None:
 def clear_terminal() -> None:
     """Clear the terminal screen."""
     os.system('cls' if platform.system() == 'Windows' else 'clear')
+
+# Example function call to start the server and monitoring
+if __name__ == '__main__':
+    config = load_config()
+    setup_logging(config['log_level'])  # Set the logging level as required
+    start_prometheus_server(8000)  # Start Prometheus server on port 8000
+    
+    historical_data = {
+        'cpu_usage': [],
+        'memory_usage': [],
+        'disk_usage': []
+    }
+
+    while True:
+        clear_terminal()
+        health_results = perform_health_checks()
+        check_and_adapt_thresholds(health_results, historical_data)
+        
+        if health_results['needs_restart']:
+            restart_service('your_service_name')
+        
+        # Append to historical data for anomaly detection
+        for key in historical_data.keys():
+            historical_data[key].append(health_results.get(f'{key}', 0))
+
+        # Print health check results
+        print(f"Timestamp: {health_results['timestamp']}")
+        print(f"CPU Usage: {health_results['cpu_usage']}%")
+        print(f"Memory Usage: {health_results['memory_usage']}%")
+        print(f"Disk Usage: {health_results['disk_usage']}%")
+        print(f"Needs Restart: {health_results['needs_restart']}")
+        
+        time.sleep(10) 
